@@ -1,7 +1,7 @@
 version: "3.2"
 services:
   manager:
-    image: explabs/platform-manager
+    image: explabs/potee-manager
     build:
       context: .
     environment:
