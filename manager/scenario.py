@@ -23,33 +23,12 @@ class Settings:
         self.upload_settings()
 
     def upload_settings(self):
-        file = Path("scenario.yml")
-        if file.exists():
-            with Path("scenario.yml").open() as s:
-                scenario = yaml.safe_load(s.read())
-                self.rounds = scenario["rounds"]
-                self.period = convert_time(scenario["period"])
-                self.actions = scenario["actions"]
-                self.services = scenario["services"]
-                self.settings.update_one(
-                    {"_id": "settings"},
-                    {
-                        "$set": {
-                            "rounds": self.rounds,
-                            "period": self.period,
-                            "actions": self.actions,
-                            "services": self.services,
-                        }
-                    },
-                    upsert=True,
-                )
-        else:
-            settings = self.settings.find_one({"_id": "settings"})
-            if settings:
-                self.rounds = settings.get("rounds")
-                self.period = settings.get("period")
-                self.actions = settings.get("actions")
-                self.services = settings.get("services")
+        settings = self.settings.find_one({"id": "scenario"})
+        if settings:
+            self.rounds = settings.get("rounds")
+            self.period = convert_time(settings.get("period"))
+            self.actions = settings.get("actions")
+            self.services = settings.get("services")
 
 
 class RoundStatus:
@@ -142,16 +121,16 @@ class Scenario:
         self.load_scenario()
 
     def load_scenario(self):
-        with Path("scenario.yml").open() as s:
-            scenario = yaml.safe_load(s.read())
-            self.rounds = scenario["rounds"]
-            self.period = convert_time(scenario["period"])
-            self.actions = scenario["actions"]
-            self.services = scenario["services"]
+        collection = self.client["ad"]["settings"]
+        scenario = collection.find_one({"id":"scenario"})
+        self.rounds = scenario["rounds"]
+        self.period = convert_time(scenario["period"])
+        self.actions = scenario["actions"]
+        self.services = scenario["services"]
 
     def get_teams(self):
         db_teams = self.client["ad"]["teams"]
-        teams = db_teams.find({}, {"name": 1})
+        teams = db_teams.find({"blocked":{"$ne":True}, "login":{"$ne":"admin"}}, {"name": 1})
         if teams:
             self.teams = list(map(lambda x: x["name"], teams))
         else:
