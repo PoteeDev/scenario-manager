@@ -25,7 +25,6 @@ class Settings:
     def upload_settings(self):
         settings = self.settings.find_one({"id": "scenario"})
         if settings:
-            self.rounds = settings.get("rounds")
             self.period = convert_time(settings.get("period"))
             self.actions = settings.get("actions")
             self.services = settings.get("services")
@@ -107,7 +106,7 @@ def convert_time(value):
 class Scenario:
     rounds: int
     period: int
-    teams: list
+    entities: list
     actions: list
     services: dict
 
@@ -117,24 +116,23 @@ class Scenario:
             username="admin",
             password=os.getenv("MONGO_PASS"),
         )
-        self.get_teams()
+        self.get_entities()
         self.load_scenario()
 
     def load_scenario(self):
         collection = self.client["ad"]["settings"]
         scenario = collection.find_one({"id":"scenario"})
-        self.rounds = scenario["rounds"]
         self.period = convert_time(scenario["period"])
         self.actions = scenario["actions"]
         self.services = scenario["services"]
 
-    def get_teams(self):
-        db_teams = self.client["ad"]["teams"]
-        teams = db_teams.find({"blocked":{"$ne":True}, "login":{"$ne":"admin"}}, {"name": 1})
-        if teams:
-            self.teams = list(map(lambda x: x["name"], teams))
+    def get_entities(self):
+        db_entities = self.client["ad"]["entities"]
+        entities = db_entities.find({"blocked":{"$ne":True}, "login":{"$ne":"admin"}}, {"name": 1})
+        if entities:
+            self.entities = list(map(lambda x: x["name"], entities))
         else:
-            self.teams = []
+            self.entities = []
 
 
 class Score(Scenario):
@@ -143,11 +141,11 @@ class Score(Scenario):
 
         self.round = RoundStatus().get_round()
         self.scoreboard = self.client["ad"]["scoreboard"]
-        for _id in self.teams:
+        for _id in self.entities:
             services = dict()
             for name, service in self.services.items():
                 services[f"srv.{name}"] = {
-                    "hp": service["hp"],
+                    "reputation": service["reputation"],
                     "gained": 0,
                     "lost": 0,
                     "score": 0,
@@ -188,7 +186,7 @@ class Score(Scenario):
             else:
                 service["sla"] = service_state
             service["status"] = status
-            service["score"] = service["hp"] * service["sla"]
+            service["score"] = service["reputation"] * service["sla"]
             self.scoreboard.update_one(
                 {"id": _id}, {"$set": {f"srv.{service_name}": service}}
             )
@@ -206,15 +204,15 @@ class Score(Scenario):
                     {
                         "$inc": {
                             f"srv.{service_name}.lost": 1,
-                            f"srv.{service_name}.hp": -exploit_cost,
+                            f"srv.{service_name}.reputation": -exploit_cost,
                         }
                     },
                 )
 
     def update_scoreboard(self, round_result):
-        for team_name, team_result in round_result.items():
-            for service_name, service in team_result.items():
-                self.calculate(team_name, service_name, service)
+        for entity_name, entity_result in round_result.items():
+            for service_name, service in entity_result.items():
+                self.calculate(entity_name, service_name, service)
 
 
 def generate_flag(n=25):
@@ -254,16 +252,16 @@ class Round(Scenario):
     def generate_request(self, action):
         req = list()
         for name, service in self.services.items():
-            for team in self.teams:
+            for entity in self.entities:
                 arguments = [
                     {
                         "extra": action,
-                        "args": [action, f"{service['domain']}.{team}"],
+                        "args": [action, f"{service['domain']}.{entity}"],
                     }
                 ]
                 if action != "ping":
-                    if self.result[team][name]["ping"] == 0:
-                        self.result[team][name] |= {
+                    if self.result[entity][name]["ping"] == 0:
+                        self.result[entity][name] |= {
                             "get": 0,
                             "put": 0,
                         }
@@ -273,37 +271,37 @@ class Round(Scenario):
                     arguments = [
                         {
                             "extra": flag,
-                            "args": [action, f"{service['domain']}.{team}", flag],
+                            "args": [action, f"{service['domain']}.{entity}", flag],
                         }
                     ]
                 elif action == "get":
                     if self.round == 0:
                         continue
-                    value = self.flags.get_uniq(team, name)
+                    value = self.flags.get_uniq(entity, name)
                     arguments = [
                         {
                             "extra": action,
-                            "args": [action, f"{service['domain']}.{team}", value],
+                            "args": [action, f"{service['domain']}.{entity}", value],
                         }
                     ]
                 elif action == "exploit":
                     arguments = []
                     for exploit_name, values in service["exploits"].items():
-                        if values["round"] <= self.round:
+                        if  self.round in values["rounds"]:
                             arguments.append(
                                 {
                                     "extra": exploit_name,
                                     "args": [
                                         action,
                                         exploit_name,
-                                        f"{service['domain']}.{team}",
+                                        f"{service['domain']}.{entity}",
                                     ],
                                 }
                             )
                 for args in arguments:
                     req.append(
                         {
-                            "id": team,
+                            "id": entity,
                             "script": service["script"],
                             "srv": name,
                             **args,
