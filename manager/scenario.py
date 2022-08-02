@@ -121,14 +121,16 @@ class Scenario:
 
     def load_scenario(self):
         collection = self.client["ad"]["settings"]
-        scenario = collection.find_one({"id":"scenario"})
+        scenario = collection.find_one({"id": "scenario"})
         self.period = convert_time(scenario["period"])
         self.actions = scenario["actions"]
         self.services = scenario["services"]
 
     def get_entities(self):
         db_entities = self.client["ad"]["entities"]
-        entities = db_entities.find({"blocked":{"$ne":True}, "login":{"$ne":"admin"}}, {"name": 1})
+        entities = db_entities.find(
+            {"blocked": {"$ne": True}, "login": {"$ne": "admin"}}, {"name": 1}
+        )
         if entities:
             self.entities = list(map(lambda x: x["name"], entities))
         else:
@@ -225,17 +227,17 @@ class FlagStorage:
             os.getenv("REDIS_HOST", "localhost"), password=os.getenv("REDIS_PASSWORD")
         )
 
-    def put(self, _id, service_name, flag, uniq):
+    def put(self, _id, service_name, checker,flag, uniq):
         pair = {"flag": flag, "id": uniq}
-        self.conn.hset(f"{_id}_{service_name}", mapping=pair)
+        self.conn.hset(f"{_id}_{service_name}_{checker}", mapping=pair)
 
-    def get_uniq(self, _id, service_name):
-        pair = self.conn.hgetall(f"{_id}_{service_name}")
+    def get_uniq(self, _id, service_name, checker):
+        pair = self.conn.hgetall(f"{_id}_{service_name}_{checker}")
         if pair:
             return pair.get(b"id").decode()
 
-    def validate(self, _id, service_name, flag):
-        pair = self.conn.hgetall(f"{_id}_{service_name}")
+    def validate(self, _id, service_name, checker, flag):
+        pair = self.conn.hgetall(f"{_id}_{service_name}_{checker}")
         if pair:
             if pair.get(b"flag").decode() == flag:
                 return True
@@ -253,41 +255,55 @@ class Round(Scenario):
         req = list()
         for name, service in self.services.items():
             for entity in self.entities:
-                arguments = [
-                    {
-                        "extra": action,
-                        "args": [action, f"{service['domain']}.{entity}"],
-                    }
-                ]
-                if action != "ping":
+                arguments = []
+                if action == "ping":
+                    arguments.append(
+                        {
+                            "extra": action,
+                            "args": [action, f"{service['domain']}.{entity}"],
+                        }
+                    )
+
+                elif action in ("get", "put"):
                     if self.result[entity][name]["ping"] == 0:
                         self.result[entity][name] |= {
                             "get": 0,
                             "put": 0,
                         }
                         continue
-                if action == "put":
-                    flag = generate_flag()
-                    arguments = [
-                        {
-                            "extra": flag,
-                            "args": [action, f"{service['domain']}.{entity}", flag],
-                        }
-                    ]
-                elif action == "get":
-                    if self.round == 0:
-                        continue
-                    value = self.flags.get_uniq(entity, name)
-                    arguments = [
-                        {
-                            "extra": action,
-                            "args": [action, f"{service['domain']}.{entity}", value],
-                        }
-                    ]
+
+                    for checker in service["checkers"]:
+                        if action == "put":
+                            flag = generate_flag()
+                            arguments.append(
+                                {
+                                    "extra": f"{checker}_{flag}",
+                                    "args": [
+                                        action,
+                                        checker,
+                                        f"{service['domain']}.{entity}",
+                                        flag,
+                                    ],
+                                }
+                            )
+                        elif action == "get":
+                            if self.round == 0:
+                                continue
+                            value = self.flags.get_uniq(entity, name, checker)
+                            arguments.append(
+                                {
+                                    "extra": checker,
+                                    "args": [
+                                        action,
+                                        checker,
+                                        f"{service['domain']}.{entity}",
+                                        value,
+                                    ],
+                                }
+                            )
                 elif action == "exploit":
-                    arguments = []
                     for exploit_name, values in service["exploits"].items():
-                        if  self.round in values["rounds"]:
+                        if self.round in values["rounds"]:
                             arguments.append(
                                 {
                                     "extra": exploit_name,
@@ -330,7 +346,7 @@ class Round(Scenario):
                         answer = 0
                         if (
                             self.flags.validate(
-                                result["id"], result["srv"], result["answer"]
+                                result["id"], result["srv"], result["extra"], result["answer"]
                             )
                             or self.round == 0
                         ):
@@ -340,7 +356,7 @@ class Round(Scenario):
                         self.flags.put(
                             result["id"],
                             result["srv"],
-                            result["extra"],
+                            *result["extra"].split("_"),
                             result["answer"],
                         )
                         self.result[result["id"]][result["srv"]][action] = 1
