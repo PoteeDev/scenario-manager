@@ -1,6 +1,5 @@
 import os
 import time
-import yaml
 import pika
 import uuid
 import json
@@ -10,6 +9,8 @@ import string
 from pathlib import Path
 from pymongo import MongoClient
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime
 
 
 class Settings:
@@ -227,7 +228,7 @@ class FlagStorage:
             os.getenv("REDIS_HOST", "localhost"), password=os.getenv("REDIS_PASSWORD")
         )
 
-    def put(self, _id, service_name, checker,flag, uniq):
+    def put(self, _id, service_name, checker, flag, uniq):
         pair = {"flag": flag, "id": uniq}
         self.conn.hset(f"{_id}_{service_name}_{checker}", mapping=pair)
 
@@ -241,6 +242,30 @@ class FlagStorage:
         if pair:
             if pair.get(b"flag").decode() == flag:
                 return True
+
+
+@dataclass
+class Action:
+    round: int
+    entity: str
+    action: str
+    srv: str
+    answer: str
+    extra: list
+    time: datetime.now
+
+
+class ActionsLogs:
+    def __init__(self) -> None:
+        client = MongoClient(
+            os.getenv("MONGO_HOST", "localhost"),
+            username="admin",
+            password=os.getenv("MONGO_PASS"),
+        )
+        self.collection = client["ad"]["actions_logs"]
+
+    def add(self, action: Action):
+        self.collection.insert_one(action.__dict__())
 
 
 class Round(Scenario):
@@ -327,6 +352,7 @@ class Round(Scenario):
 
     def run(self):
         runner = RunnerTask()
+        logs = ActionsLogs()
         for action in self.actions:
             req = self.generate_request(action)
             if req:
@@ -334,41 +360,58 @@ class Round(Scenario):
                 response = runner.send("runner", req)
                 print("<--", response)
                 for result in response:
-                    if not self.result[result["id"]].get(result["srv"]):
-                        self.result[result["id"]] |= {result["srv"]: {"exploit": {}}}
+                    r = Action(
+                        result["id"],
+                        action,
+                        result["srv"],
+                        result["answer"],
+                        result["extra"],
+                    )
+                    if not self.result[r.entity].get(r.srv):
+                        self.result[r.entity] |= {r.srv: {"exploit": {}}}
                     if result["extra"] == "error":
                         if action != "exploit":
-                            self.result[result["id"]][result["srv"]][action] = 0
+                            self.result[result["id"]][r.srv][action] = 0
                         print(result)
                         continue
-
-                    if action == "get":
-                        answer = 0
-                        if (
-                            self.flags.validate(
-                                result["id"], result["srv"], result["extra"], result["answer"]
+                    match action:
+                        case "ping":
+                            answer = 0
+                            if result["answer"] == "pong":
+                                answer = 1
+                            self.result[result["id"]][r.srv][action] = answer
+                        case "get":
+                            answer = 0
+                            if (
+                                self.flags.validate(
+                                    r.entity,
+                                    result["srv"],
+                                    result["extra"],
+                                    result["answer"],
+                                )
+                                or self.round == 0
+                            ):
+                                answer = 1
+                            self.result[result["id"]][r.srv][action] = answer
+                        case "put":
+                            self.flags.put(
+                                result["id"],
+                                result["srv"],
+                                *result["extra"].split("_"),
+                                result["answer"],
                             )
-                            or self.round == 0
-                        ):
-                            answer = 1
-                        self.result[result["id"]][result["srv"]][action] = answer
-                    elif action == "put":
-                        self.flags.put(
-                            result["id"],
-                            result["srv"],
-                            *result["extra"].split("_"),
-                            result["answer"],
-                        )
-                        self.result[result["id"]][result["srv"]][action] = 1
-                    elif action == "exploit":
-                        self.result[result["id"]][result["srv"]][action] |= {
-                            result["extra"]: int(result["answer"])
-                        }
+                            self.result[r.entity][r.srv][action] = 1
+                        case "exploit":
+                            self.result[r.entity][r.srv][action] |= {
+                                result["extra"]: int(result["answer"])
+                            }
 
-                    else:
-                        self.result[result["id"]][result["srv"]][action] = int(
-                            result["answer"]
-                        )
+                        case _:
+                            self.result[r.entity][result["srv"]][action] = int(
+                                result["answer"]
+                            )
+                    
+                    logs.add(result)
         self.round_status.increment_round()
 
 
