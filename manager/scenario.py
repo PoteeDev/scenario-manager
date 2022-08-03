@@ -251,8 +251,8 @@ class Action:
     action: str
     srv: str
     answer: str
-    extra: list
-    time: datetime.now
+    extra: str
+    time: datetime = datetime.now()
 
 
 class ActionsLogs:
@@ -265,7 +265,7 @@ class ActionsLogs:
         self.collection = client["ad"]["actions_logs"]
 
     def add(self, action: Action):
-        self.collection.insert_one(action.__dict__())
+        self.collection.insert_one(action)
 
 
 class Round(Scenario):
@@ -361,6 +361,7 @@ class Round(Scenario):
                 print("<--", response)
                 for result in response:
                     r = Action(
+                        self.round,
                         result["id"],
                         action,
                         result["srv"],
@@ -369,48 +370,47 @@ class Round(Scenario):
                     )
                     if not self.result[r.entity].get(r.srv):
                         self.result[r.entity] |= {r.srv: {"exploit": {}}}
-                    if result["extra"] == "error":
+                    if r.extra == "error":
                         if action != "exploit":
-                            self.result[result["id"]][r.srv][action] = 0
+                            self.result[r.entity][r.srv][action] = 0
                         print(result)
                         continue
                     match action:
                         case "ping":
                             answer = 0
-                            if result["answer"] == "pong":
+                            if r.answer == "pong":
                                 answer = 1
-                            self.result[result["id"]][r.srv][action] = answer
+                            self.result[r.entity][r.srv][action] = answer
                         case "get":
                             answer = 0
                             if (
                                 self.flags.validate(
                                     r.entity,
-                                    result["srv"],
-                                    result["extra"],
-                                    result["answer"],
+                                    r.srv,
+                                    r.extra,
+                                    r.answer,
                                 )
                                 or self.round == 0
                             ):
                                 answer = 1
-                            self.result[result["id"]][r.srv][action] = answer
+                            self.result[r.entity][r.srv][action] = answer
                         case "put":
                             self.flags.put(
-                                result["id"],
-                                result["srv"],
-                                *result["extra"].split("_"),
-                                result["answer"],
+                                r.entity,
+                                r.srv,
+                                *r.extra.split("_"),
+                                r.answer,
                             )
                             self.result[r.entity][r.srv][action] = 1
                         case "exploit":
                             self.result[r.entity][r.srv][action] |= {
-                                result["extra"]: int(result["answer"])
+                                r.extra: int(r.answer)
                             }
 
                         case _:
-                            self.result[r.entity][result["srv"]][action] = int(
-                                result["answer"]
+                            self.result[r.entity][r.srv][action] = int(
+                                r.answer
                             )
-                    
                     logs.add(result)
         self.round_status.increment_round()
 
