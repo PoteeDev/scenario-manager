@@ -280,8 +280,8 @@ class Round(Scenario):
                                     "extra": f"{checker}_{flag}",
                                     "args": [
                                         action,
-                                        checker,
                                         f"{service['domain']}.{entity}",
+                                        checker,
                                         flag,
                                     ],
                                 }
@@ -295,8 +295,8 @@ class Round(Scenario):
                                     "extra": checker,
                                     "args": [
                                         action,
-                                        checker,
                                         f"{service['domain']}.{entity}",
+                                        checker,
                                         value,
                                     ],
                                 }
@@ -309,8 +309,8 @@ class Round(Scenario):
                                     "extra": exploit_name,
                                     "args": [
                                         action,
-                                        exploit_name,
                                         f"{service['domain']}.{entity}",
+                                        exploit_name,
                                     ],
                                 }
                             )
