@@ -2,6 +2,7 @@ from scenario import Score, Round, Settings
 from flask import Flask, jsonify, request, make_response
 from flask_apscheduler import APScheduler
 from functools import wraps
+from datetime import datetime
 import os
 import jwt
 
@@ -57,6 +58,7 @@ def run():
         trigger="interval",
         seconds=int(settings.period),
     )
+    scheduler.modify_job("scenario",next_run_time=datetime.now())
     return jsonify({"status": "runned"}), 200
 
 
