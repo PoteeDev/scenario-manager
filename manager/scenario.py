@@ -1,3 +1,4 @@
+import importlib
 import os
 import time
 import pika
@@ -163,15 +164,20 @@ class Score(Scenario):
             )
 
     def calculate(self, _id, service_name, service: dict):
-        exploits = service.pop("exploit")
-        if all(service.values()):
+        
+        if service.get("exploit"):
+            exploits = service.pop("exploit")
+            self.update_exploits(_id, service_name, exploits)
+        service_results = list()
+        for checkers in service.values():
+            service_results.extend(checkers.values())
+        if all(service_results):
             status = 1
-        elif any(service.values()):
+        elif any(service_results):
             status = 0
         else:
             status = -1
 
-        self.update_exploits(_id, service_name, exploits)
         self.update_service(_id, service_name, status)
         score = self.scoreboard.find_one({"id": _id})
         total_score = sum(map(lambda x: x["score"], score["srv"].values()))
@@ -275,144 +281,201 @@ class Round(Scenario):
         self.round = self.round_status.get_round()
         self.flags = FlagStorage()
         self.result = defaultdict(dict)
+        self.actions_modules = dict()
+        self.load_actions()
 
-    def generate_request(self, action):
-        req = list()
-        for name, service in self.services.items():
-            for entity in self.entities:
-                arguments = []
-                if action == "ping":
-                    arguments.append(
-                        {
-                            "extra": action,
-                            "args": [action, f"{service['domain']}.{entity}"],
-                        }
-                    )
+    # def generate_request(self, action):
+    #     req = list()
+    #     for name, service in self.services.items():
+    #         for entity in self.entities:
+    #             arguments = []
+    #             if action == "ping":
+    #                 arguments.append(
+    #                     {
+    #                         "extra": action,
+    #                         "args": [action, f"{service['domain']}.{entity}"],
+    #                     }
+    #                 )
 
-                elif action in ("get", "put"):
-                    if self.result[entity][name]["ping"] == 0:
-                        self.result[entity][name] |= {
-                            "get": 0,
-                            "put": 0,
-                        }
-                        continue
+    #             elif action in ("get", "put"):
+    #                 if self.result[entity][name]["ping"] == 0:
+    #                     self.result[entity][name] |= {
+    #                         "get": 0,
+    #                         "put": 0,
+    #                     }
+    #                     continue
 
-                    for checker in service["checkers"]:
-                        if action == "put":
-                            flag = generate_flag()
-                            arguments.append(
-                                {
-                                    "extra": f"{checker}_{flag}",
-                                    "args": [
-                                        action,
-                                        f"{service['domain']}.{entity}",
-                                        checker,
-                                        flag,
-                                    ],
-                                }
-                            )
-                        elif action == "get":
-                            if self.round == 0:
-                                continue
-                            value = self.flags.get_uniq(entity, name, checker)
-                            arguments.append(
-                                {
-                                    "extra": checker,
-                                    "args": [
-                                        action,
-                                        f"{service['domain']}.{entity}",
-                                        checker,
-                                        value,
-                                    ],
-                                }
-                            )
-                elif action == "exploit":
-                    for exploit_name, values in service["exploits"].items():
-                        if self.round in values["rounds"]:
-                            arguments.append(
-                                {
-                                    "extra": exploit_name,
-                                    "args": [
-                                        action,
-                                        f"{service['domain']}.{entity}",
-                                        exploit_name,
-                                    ],
-                                }
-                            )
-                for args in arguments:
-                    req.append(
-                        {
-                            "id": entity,
-                            "script": service["script"],
-                            "srv": name,
-                            **args,
-                        }
-                    )
-        return req
+    #                 for checker in service["checkers"]:
+    #                     if action == "put":
+    #                         flag = generate_flag()
+    #                         arguments.append(
+    #                             {
+    #                                 "extra": f"{checker}_{flag}",
+    #                                 "args": [
+    #                                     action,
+    #                                     f"{service['domain']}.{entity}",
+    #                                     checker,
+    #                                     flag,
+    #                                 ],
+    #                             }
+    #                         )
+    #                     elif action == "get":
+    #                         if self.round == 0:
+    #                             continue
+    #                         value = self.flags.get_uniq(entity, name, checker)
+    #                         arguments.append(
+    #                             {
+    #                                 "extra": checker,
+    #                                 "args": [
+    #                                     action,
+    #                                     f"{service['domain']}.{entity}",
+    #                                     checker,
+    #                                     value,
+    #                                 ],
+    #                             }
+    #                         )
+    #             elif action == "exploit":
+    #                 for exploit_name, values in service["exploits"].items():
+    #                     if self.round in values["rounds"]:
+    #                         arguments.append(
+    #                             {
+    #                                 "extra": exploit_name,
+    #                                 "args": [
+    #                                     action,
+    #                                     f"{service['domain']}.{entity}",
+    #                                     exploit_name,
+    #                                 ],
+    #                             }
+    #                         )
+    #             for args in arguments:
+    #                 req.append(
+    #                     {
+    #                         "id": entity,
+    #                         "script": service["script"],
+    #                         "srv": name,
+    #                         **args,
+    #                     }
+    #                 )
+    #     return req
+
+    def load_actions(self):
+        base_dir = "manager"
+        actions_dir = "actions"
+        actions_path = Path(actions_dir)
+
+        for filename in actions_path.glob("[!_]*"):
+            action_module = importlib.import_module(f"{actions_dir}.{filename.stem}")
+            self.actions_modules[filename.stem] = action_module.action
 
     def run(self):
         runner = RunnerTask()
         logs = ActionsLogs()
-        for action in self.actions:
-            req = self.generate_request(action)
-            if req:
-                print("-->", req)
-                response = runner.send("runner", req)
-                print("<--", response)
-                for result in response:
-                    r = Action(
-                        self.round,
-                        result["id"],
-                        action,
-                        result["srv"],
-                        result["answer"],
-                        result["extra"],
-                    )
-                    if not self.result[r.entity].get(r.srv):
-                        self.result[r.entity] |= {r.srv: {"exploit": {}}}
-                    if r.extra == "error":
-                        if action != "exploit":
-                            self.result[r.entity][r.srv][action] = 0
-                        print(result)
-                        continue
-                    match action:
-                        case "ping":
-                            answer = 0
-                            if r.answer == "pong":
-                                answer = 1
-                            self.result[r.entity][r.srv][action] = answer
-                        case "get":
-                            answer = 0
-                            if (
-                                self.flags.validate(
-                                    r.entity,
-                                    r.srv,
-                                    r.extra,
-                                    r.answer,
-                                )
-                                or self.round == 0
-                            ):
-                                answer = 1
-                            self.result[r.entity][r.srv][action] = answer
-                        case "put":
-                            self.flags.put(
-                                r.entity,
-                                r.srv,
-                                *r.extra.split("_"),
-                                r.answer,
-                            )
-                            self.result[r.entity][r.srv][action] = 1
+        for action_name in self.actions:
+            print(f"action {action_name}")
+            request_list = list()
+            for service_name, service in self.services.items():
+                print(f"service {service_name}")
+                for entity in self.entities:
+                    match action_name:
                         case "exploit":
-                            self.result[r.entity][r.srv][action] |= {
-                                r.extra: int(r.answer)
-                            }
-
+                            args = service.get("exploits"), self.round
+                        case "ping":
+                            args = None
                         case _:
-                            self.result[r.entity][r.srv][action] = int(
-                                r.answer
-                            )
-                    logs.add(result)
-        self.round_status.increment_round()
+                            args = service.get("checkers")
+                    request_list.extend(
+                        list(
+                            self.actions_modules[action_name](
+                                entity, service["script"], service_name
+                            ).send(args)
+                        )
+                    )
+            
+            print(request_list)
+            if not request_list:
+                continue
+            response = runner.send("runner", request_list)
+            for result in response:
+                r = Action(
+                    self.round,
+                    result["id"],
+                    action_name,
+                    result["srv"],
+                    result["answer"],
+                    result["extra"],
+                )
+                answer = self.actions_modules[action_name](
+                    result["id"], None, result["srv"]
+                ).receive(r)
+                if not self.result[r.entity].get(r.srv):
+                    self.result[r.entity] |= {r.srv: {action_name: {}}}
+                elif not self.result[r.entity][r.srv].get(action_name):
+                    self.result[r.entity][r.srv] |= {action_name: {}}
+                self.result[r.entity][r.srv][action_name] |= answer
+            print(self.result)
+            self.round_status.increment_round()
+
+    # def run(self):
+    #     runner = RunnerTask()
+    #     logs = ActionsLogs()
+    #     for action in self.actions:
+    #         req = self.generate_request(action)
+    #         if req:
+    #             print("-->", req)
+    #             response = runner.send("runner", req)
+    #             print("<--", response)
+    #             for result in response:
+    #                 r = Action(
+    #                     self.round,
+    #                     result["id"],
+    #                     action,
+    #                     result["srv"],
+    #                     result["answer"],
+    #                     result["extra"],
+    #                 )
+    #                 if not self.result[r.entity].get(r.srv):
+    #                     self.result[r.entity] |= {r.srv: {"exploit": {}}}
+    #                 if r.extra == "error":
+    #                     if action != "exploit":
+    #                         self.result[r.entity][r.srv][action] = 0
+    #                     print(result)
+    #                     continue
+    #                 match action:
+    #                     case "ping":
+    #                         answer = 0
+    #                         if r.answer == "pong":
+    #                             answer = 1
+    #                         self.result[r.entity][r.srv][action] = answer
+    #                     case "get":
+    #                         answer = 0
+    #                         if (
+    #                             self.flags.validate(
+    #                                 r.entity,
+    #                                 r.srv,
+    #                                 r.extra,
+    #                                 r.answer,
+    #                             )
+    #                             or self.round == 0
+    #                         ):
+    #                             answer = 1
+    #                         self.result[r.entity][r.srv][action] = answer
+    #                     case "put":
+    #                         self.flags.put(
+    #                             r.entity,
+    #                             r.srv,
+    #                             *r.extra.split("_"),
+    #                             r.answer,
+    #                         )
+    #                         self.result[r.entity][r.srv][action] = 1
+    #                     case "exploit":
+    #                         self.result[r.entity][r.srv][action] |= {
+    #                             r.extra: int(r.answer)
+    #                         }
+
+    #                     case _:
+    #                         self.result[r.entity][r.srv][action] = int(r.answer)
+    #                 logs.add(result)
+    #     self.round_status.increment_round()
 
 
 if __name__ == "__main__":
