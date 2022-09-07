@@ -1,20 +1,24 @@
 import os
-from actions._base import BaseAction, Action
+from actions._base import ActionBase
+import asyncio
 
-
-class PingAction(BaseAction):
-    def send(self, *args):
+class PingAction(ActionBase):
+    async def __call__(self, *args, **kwargs):
+        #await asyncio.sleep(0)
+        rpc = await self.connect()
         request = {
-            **self.__dict__,
-            "extra": "ping",
-            "args": ["ping", f"{self.srv}.{self._domain}"],
+            "id": args[0],
+            "srv": args[1],
+            "script": kwargs["service_info"]["script"],
+            "args": ["ping", '.'.join(reversed(args))]
         }
-        yield request
+        answer = await rpc.rpc_send("runner", request)
+        result = 0
+        if answer["answer"] == "pong":
+            result = 1
 
-    def receive(self, response: Action):
-        if response.answer == "pong":
-            return {"ping": 1}
-        return {"ping": 0}
+        self.write("ping", *args, result=result)
+        
 
 
 action = PingAction

@@ -5,6 +5,7 @@ from functools import wraps
 from datetime import datetime
 import os
 import jwt
+import asyncio
 
 app = Flask(__name__)
 scheduler = APScheduler()
@@ -13,10 +14,12 @@ scheduler.start()
 
 
 def scenario_run():
-    score = Score()
-    round = Round()
-    round.run()
-    score.update_scoreboard(round.result)
+    asyncio.run(Round().start())
+    Score().update_scoreboard()
+    # score = Score()
+    # round = Round()
+    # round.run()
+    # score.update_scoreboard(round.result)
 
 
 def admin_required(f):
@@ -58,7 +61,7 @@ def run():
         trigger="interval",
         seconds=int(settings.period),
     )
-    scheduler.modify_job("scenario",next_run_time=datetime.now())
+    scheduler.modify_job("scenario", next_run_time=datetime.now())
     return jsonify({"status": "runned"}), 200
 
 

@@ -1,33 +1,36 @@
-from dataclasses import dataclass
-from actions._base import BaseAction, Action
+from actions._base import ActionBase
 from flags import FlagStorage
-import os
 
 
-@dataclass
-class GetAction(BaseAction):
-    def send(self, checkers):
-        for checker in checkers:
-            uniq_value = FlagStorage().get_uniq(self.id, self.srv, checker)
-            request = {
-                **self.__dict__,
-                "extra": checker,
-                "args": ["get", f"{self.srv}.{self._domain}", checker, uniq_value],
-            }
-            yield request
+flags = FlagStorage()
 
-    def receive(self, response: Action):
-        if (
-            FlagStorage().validate(
-                response.entity,
-                response.srv,
-                response.extra,
-                response.answer,
-            )
-            or response.round == 0
-        ):
-            return {response.extra: 1}
-        return {response.extra: 0}
+class GetAction(ActionBase):
+    async def __call__(self, *args, **kwargs):
+        rpc = await self.connect()
+        for checker in kwargs["service_info"]["checkers"]:
+            result = 0
+            if self.read("ping", *args) == 1:
+                # for first round
+                if kwargs["round"] == 0:
+                    self.write("get", *args, checker, result=1)
+                    continue
+
+                value = flags.get_uniq(*args, checker)
+                request = {
+                    "id": args[0],
+                    "srv": args[1],
+                    "script": kwargs["service_info"]["script"],
+                    "args": ["get", '.'.join(reversed(args)), checker, value],
+                }
+                answer = await rpc.rpc_send("runner", request)
+                if flags.validate(
+                    *args,
+                    checker,
+                    answer['answer'],
+                ):
+                    result = 1
+
+            self.write("get", *args, checker, result=result)
 
 
 action = GetAction

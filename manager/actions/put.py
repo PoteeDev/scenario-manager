@@ -1,7 +1,5 @@
-from dataclasses import dataclass
-from actions._base import BaseAction, Action
+from actions._base import ActionBase
 from flags import FlagStorage
-import os
 import random
 import string
 
@@ -9,31 +7,30 @@ import string
 def generate_flag(n=25):
     return "".join(random.choices(string.ascii_uppercase + string.ascii_lowercase, k=n))
 
+class PutAction(ActionBase):
+    async def __call__(self, *args, **kwargs):
+        rpc = await self.connect()
+        for checker in kwargs["service_info"]["checkers"]:
+            result = 0
+            if self.read("ping", *args) == 1:
+                flag = generate_flag()
+                request = {
+                    "id": args[0],
+                    "srv": args[1],
+                    "script": kwargs["service_info"]["script"],
+                    "args": ["put", '.'.join(reversed(args)), checker, flag],
+                }
+                answer = await rpc.rpc_send("runner", request)
+                if answer:
+                    FlagStorage().put(
+                        *args,
+                        checker,
+                        flag,
+                        answer['answer'],
+                    )
+                    result = 1
 
-@dataclass
-class PutAction(BaseAction):
-    def send(self, checkers):
-        for checker in checkers:
-            flag = generate_flag()
-            # flag = "321"
-            request = {
-                **self.__dict__,
-                "extra": f"{checker}_{flag}",
-                "args": ["put", f"{self.srv}.{self._domain}", checker, flag],
-            }
-            yield request
-
-    def receive(self, response: Action):
-        # TODO: fix bad condition
-        if response.extra != "error":
-            FlagStorage().put(
-                response.entity,
-                response.srv,
-                *response.extra.split("_"),
-                response.answer,
-            )
-            return {response.extra.split("_")[0]: 1}
-        return {response.extra.split("_")[0]: 0}
+            self.write("put", *args, checker, result=result)
 
 
 action = PutAction

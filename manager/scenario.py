@@ -1,17 +1,14 @@
+import asyncio
 import importlib
 import os
+import re
 import time
-import pika
-import uuid
-import json
 import redis
 import random
 import string
 from pathlib import Path
 from pymongo import MongoClient
-from collections import defaultdict
-from dataclasses import dataclass
-from datetime import datetime
+from storage import storage
 
 
 class Settings:
@@ -19,7 +16,7 @@ class Settings:
         self.client = MongoClient(
             os.getenv("MONGO_HOST", "localhost"),
             username="admin",
-            password=os.getenv("MONGO_PASS"),
+            password=os.getenv("MONGO_PASS", "admin"),
         )
         self.settings = self.client["ad"]["settings"]
         self.upload_settings()
@@ -49,52 +46,6 @@ class RoundStatus:
         if result:
             return result["round"]
         return 0
-
-
-class RunnerTask(object):
-    def __init__(self):
-        self.connection = pika.BlockingConnection(
-            pika.ConnectionParameters(
-                host=os.getenv("RABBITMQ_HOST", "localhost"),
-                credentials=pika.PlainCredentials(
-                    os.getenv("RABBITMQ_USER", "admin"),
-                    os.getenv("RABBITMQ_PASS", "admin"),
-                ),
-            )
-        )
-
-        self.channel = self.connection.channel()
-
-        result = self.channel.queue_declare(queue="", exclusive=True)
-        self.callback_queue = result.method.queue
-
-        self.channel.basic_consume(
-            queue=self.callback_queue,
-            on_message_callback=self.on_response,
-            auto_ack=True,
-        )
-
-        self.response = None
-        self.corr_id = None
-
-    def on_response(self, ch, method, props, body):
-        if self.corr_id == props.correlation_id:
-            self.response = body
-
-    def send(self, channel, mes):
-        self.response = None
-        self.corr_id = str(uuid.uuid4())
-        self.channel.basic_publish(
-            exchange="",
-            routing_key=channel,
-            properties=pika.BasicProperties(
-                reply_to=self.callback_queue,
-                correlation_id=self.corr_id,
-            ),
-            body=json.dumps(mes),
-        )
-        self.connection.process_data_events(time_limit=None)
-        return json.loads(self.response)
 
 
 def convert_time(value):
@@ -162,66 +113,135 @@ class Score(Scenario):
                 {"$setOnInsert": services},
                 upsert=True,
             )
+    def get_matching(self, event):
+        return (storage[key] for key in storage if re.match(event, key))
 
-    def calculate(self, _id, service_name, service: dict):
-        
-        if service.get("exploit"):
-            exploits = service.pop("exploit")
-            self.update_exploits(_id, service_name, exploits)
-        service_results = list()
-        for checkers in service.values():
-            service_results.extend(checkers.values())
-        if all(service_results):
-            status = 1
-        elif any(service_results):
-            status = 0
-        else:
-            status = -1
-
-        self.update_service(_id, service_name, status)
-        score = self.scoreboard.find_one({"id": _id})
-        total_score = sum(map(lambda x: x["score"], score["srv"].values()))
-        self.scoreboard.update_one({"id": _id}, {"$set": {"total_score": total_score}})
-
-    def update_service(self, _id, service_name, status):
-        service = self.scoreboard.find_one({"id": _id}, {f"srv.{service_name}": 1})
-        service = service["srv"][service_name]
-        service_state = 1 if status == 1 else 0
-        if service:
-            if self.round > 0:
-                service["sla"] = (
-                    service["sla"] * (self.round - 1) + service_state
-                ) / self.round
+    def get_status(self, entity):
+        for service in self.services:
+            ping_action = f"ping_{entity}_{service}"
+            if not storage.get(ping_action):
+                yield {service: -1}
+            pattern = f"\w{{3}}_{entity}_{service}_.*"
+            results = list(self.get_matching(pattern))
+            if all(results):
+                yield service, 1
+            elif any(results):
+                yield service, 0
             else:
-                service["sla"] = service_state
-            service["status"] = status
-            service["score"] = service["reputation"] * service["sla"]
-            self.scoreboard.update_one(
-                {"id": _id}, {"$set": {f"srv.{service_name}": service}}
-            )
+                yield service, -1
 
-    def update_exploits(self, _id, service_name, exploits):
-        for name, result in exploits.items():
-            exploit_cost = self.services[service_name]["exploits"][name]["cost"]
-            if result == 0:
-                self.scoreboard.update_one(
-                    {"id": _id}, {"$inc": {f"srv.{service_name}.gained": 1}}
-                )
-            else:
-                self.scoreboard.update_one(
-                    {"id": _id},
-                    {
-                        "$inc": {
-                            f"srv.{service_name}.lost": 1,
-                            f"srv.{service_name}.reputation": -exploit_cost,
-                        }
-                    },
-                )
+    def get_exploits(self, entity):
+        for service in self.services:
+            pattern = f"exploit_{entity}_{service}_.*"
+            results = list(self.get_matching(pattern))
+            for r in results:
+                yield service, r
 
-    def update_scoreboard(self, round_result):
-        for entity_name, entity_result in round_result.items():
-            for service_name, service in entity_result.items():
-                self.calculate(entity_name, service_name, service)
+    def update_services(self, entity, services):
+        for service_name, status in services.items():
+            service = self.scoreboard.find_one({"id": entity}, {f"srv.{service_name}": 1})
+            service = service["srv"][service_name]
+            service_state = 1 if status == 1 else 0
+            if service:
+                if self.round > 0:
+                    service["sla"] = (
+                        service["sla"] * (self.round - 1) + service_state
+                    ) / self.round
+                else:
+                    service["sla"] = service_state
+                service["status"] = status
+                service["score"] = service["reputation"] * service["sla"]
+                self.scoreboard.update_one(
+                    {"id": entity}, {"$set": {f"srv.{service_name}": service}}
+                )
+    def update_exploits(self, _id, exploits):
+        for service_name, result in exploits.items():
+            for name, status in result.items():
+                exploit_cost = self.services[service_name]["exploits"][name]["cost"]
+                if status == 0:
+                    self.scoreboard.update_one(
+                        {"id": _id}, {"$inc": {f"srv.{service_name}.gained": 1}}
+                    )
+                else:
+                    self.scoreboard.update_one(
+                        {"id": _id},
+                        {
+                            "$inc": {
+                                f"srv.{service_name}.lost": 1,
+                                f"srv.{service_name}.reputation": -exploit_cost,
+                            }
+                        },
+                    )
+
+    def update_scoreboard(self):
+        for entity in self.entities:
+            status = self.get_status(entity)
+            self.update_services(entity, dict(status))
+            exploits = self.get_exploits(entity)
+            self.update_exploits(entity, dict(exploits))
+            score = self.scoreboard.find_one({"id": entity})
+            total_score = sum(map(lambda x: x["score"], score["srv"].values()))
+            self.scoreboard.update_one({"id": entity}, {"$set": {"total_score": total_score}})
+
+#     def calculate(self, _id, service_name, service: dict):
+
+#         if service.get("exploit"):
+#             exploits = service.pop("exploit")
+#             self.update_exploits(_id, service_name, exploits)
+#         service_results = list()
+#         for checkers in service.values():
+#             service_results.extend(checkers.values())
+#         if all(service_results):
+#             status = 1
+#         elif any(service_results):
+#             status = 0
+#         else:
+#             status = -1
+
+#         self.update_service(_id, service_name, status)
+#         score = self.scoreboard.find_one({"id": _id})
+#         total_score = sum(map(lambda x: x["score"], score["srv"].values()))
+#         self.scoreboard.update_one({"id": _id}, {"$set": {"total_score": total_score}})
+
+#     def update_service(self, _id, service_name, status):
+#         service = self.scoreboard.find_one({"id": _id}, {f"srv.{service_name}": 1})
+#         service = service["srv"][service_name]
+#         service_state = 1 if status == 1 else 0
+#         if service:
+#             if self.round > 0:
+#                 service["sla"] = (
+#                     service["sla"] * (self.round - 1) + service_state
+#                 ) / self.round
+#             else:
+#                 service["sla"] = service_state
+#             service["status"] = status
+#             service["score"] = service["reputation"] * service["sla"]
+#             self.scoreboard.update_one(
+#                 {"id": _id}, {"$set": {f"srv.{service_name}": service}}
+#             )
+
+#     def update_exploits(self, _id, service_name, exploits):
+#         for name, result in exploits.items():
+#             exploit_cost = self.services[service_name]["exploits"][name]["cost"]
+#             if result == 0:
+#                 self.scoreboard.update_one(
+#                     {"id": _id}, {"$inc": {f"srv.{service_name}.gained": 1}}
+#                 )
+#             else:
+#                 self.scoreboard.update_one(
+#                     {"id": _id},
+#                     {
+#                         "$inc": {
+#                             f"srv.{service_name}.lost": 1,
+#                             f"srv.{service_name}.reputation": -exploit_cost,
+#                         }
+#                     },
+#                 )
+
+#     def update_scoreboard(self, round_result):
+#         for entity_name, entity_result in round_result.items():
+#             for service_name, service in entity_result.items():
+#                 self.calculate(entity_name, service_name, service)
 
 
 def generate_flag(n=25):
@@ -250,170 +270,43 @@ class FlagStorage:
                 return True
 
 
-@dataclass
-class Action:
-    round: int
-    entity: str
-    action: str
-    srv: str
-    answer: str
-    extra: str
-    time: datetime = datetime.now()
-
-
-class ActionsLogs:
-    def __init__(self) -> None:
-        client = MongoClient(
-            os.getenv("MONGO_HOST", "localhost"),
-            username="admin",
-            password=os.getenv("MONGO_PASS"),
-        )
-        self.collection = client["ad"]["actions_logs"]
-
-    def add(self, action: Action):
-        self.collection.insert_one(action)
-
-
 class Round(Scenario):
     def __init__(self) -> None:
         super().__init__()
         self.round_status = RoundStatus()
         self.round = self.round_status.get_round()
-        self.flags = FlagStorage()
-        self.result = defaultdict(dict)
         self.actions_modules = dict()
         self.load_actions()
 
-    # def generate_request(self, action):
-    #     req = list()
-    #     for name, service in self.services.items():
-    #         for entity in self.entities:
-    #             arguments = []
-    #             if action == "ping":
-    #                 arguments.append(
-    #                     {
-    #                         "extra": action,
-    #                         "args": [action, f"{service['domain']}.{entity}"],
-    #                     }
-    #                 )
-
-    #             elif action in ("get", "put"):
-    #                 if self.result[entity][name]["ping"] == 0:
-    #                     self.result[entity][name] |= {
-    #                         "get": 0,
-    #                         "put": 0,
-    #                     }
-    #                     continue
-
-    #                 for checker in service["checkers"]:
-    #                     if action == "put":
-    #                         flag = generate_flag()
-    #                         arguments.append(
-    #                             {
-    #                                 "extra": f"{checker}_{flag}",
-    #                                 "args": [
-    #                                     action,
-    #                                     f"{service['domain']}.{entity}",
-    #                                     checker,
-    #                                     flag,
-    #                                 ],
-    #                             }
-    #                         )
-    #                     elif action == "get":
-    #                         if self.round == 0:
-    #                             continue
-    #                         value = self.flags.get_uniq(entity, name, checker)
-    #                         arguments.append(
-    #                             {
-    #                                 "extra": checker,
-    #                                 "args": [
-    #                                     action,
-    #                                     f"{service['domain']}.{entity}",
-    #                                     checker,
-    #                                     value,
-    #                                 ],
-    #                             }
-    #                         )
-    #             elif action == "exploit":
-    #                 for exploit_name, values in service["exploits"].items():
-    #                     if self.round in values["rounds"]:
-    #                         arguments.append(
-    #                             {
-    #                                 "extra": exploit_name,
-    #                                 "args": [
-    #                                     action,
-    #                                     f"{service['domain']}.{entity}",
-    #                                     exploit_name,
-    #                                 ],
-    #                             }
-    #                         )
-    #             for args in arguments:
-    #                 req.append(
-    #                     {
-    #                         "id": entity,
-    #                         "script": service["script"],
-    #                         "srv": name,
-    #                         **args,
-    #                     }
-    #                 )
-    #     return req
-
     def load_actions(self):
-        base_dir = "manager"
+        base_dir = "manager/actions"
         actions_dir = "actions"
         actions_path = Path(actions_dir)
-
         for filename in actions_path.glob("[!_]*"):
+            print(filename)
             action_module = importlib.import_module(f"{actions_dir}.{filename.stem}")
             self.actions_modules[filename.stem] = action_module.action
 
-    def run(self):
-        runner = RunnerTask()
-        logs = ActionsLogs()
-        for action_name in self.actions:
-            print(f"action {action_name}")
-            request_list = list()
-            for service_name, service in self.services.items():
-                print(f"service {service_name}")
-                for entity in self.entities:
-                    match action_name:
-                        case "exploit":
-                            args = service.get("exploits"), self.round
-                        case "ping":
-                            args = None
-                        case _:
-                            args = service.get("checkers")
-                    request_list.extend(
-                        list(
-                            self.actions_modules[action_name](
-                                entity, service["script"], service_name
-                            ).send(args)
+    async def start(self):
+        print(self.actions_modules)
+        tasks_total = 0
+        for action in self.actions:
+            tasks = []
+            for entity in self.entities:
+                for service in self.services:
+                    tasks.append(
+                        asyncio.ensure_future(
+                            self.actions_modules[action]()(
+                                entity,
+                                service,
+                                service_info=self.services[service],
+                                round=self.round,
+                            )
                         )
                     )
-            
-            print(request_list)
-            if not request_list:
-                continue
-            response = runner.send("runner", request_list)
-            for result in response:
-                r = Action(
-                    self.round,
-                    result["id"],
-                    action_name,
-                    result["srv"],
-                    result["answer"],
-                    result["extra"],
-                )
-                answer = self.actions_modules[action_name](
-                    result["id"], None, result["srv"]
-                ).receive(r)
-                if not self.result[r.entity].get(r.srv):
-                    self.result[r.entity] |= {r.srv: {action_name: {}}}
-                elif not self.result[r.entity][r.srv].get(action_name):
-                    self.result[r.entity][r.srv] |= {action_name: {}}
-                self.result[r.entity][r.srv][action_name] |= answer
-            print(self.result)
-            self.round_status.increment_round()
+            await asyncio.gather(*tasks)
+            tasks_total += len(tasks)
+        self.round_status.increment_round()
 
     # def run(self):
     #     runner = RunnerTask()
@@ -479,20 +372,25 @@ class Round(Scenario):
 
 
 if __name__ == "__main__":
-    scenario = Scenario()
-    score = Score()
+    import time
 
     start_time = time.time()
-    for i in range(scenario.rounds):
-        print("Round:", i)
-        round = Round()
-        round.run()
-        score.update_scoreboard(round.result, i)
-        time.sleep(scenario.period - ((time.time() - start_time) % scenario.period))
-    elapsed = time.time() - start_time
-    print(
-        "Elapsed time:",
-        time.strftime(
-            "%H:%M:%S.{}".format(str(elapsed % 1)[2:])[:15], time.gmtime(elapsed)
-        ),
-    )
+    asyncio.run(Round().start())
+    print("--- %s seconds ---" % (time.time() - start_time))
+    # scenario = Scenario()
+    # score = Score()
+
+    # start_time = time.time()
+    # for i in range(scenario.rounds):
+    #     print("Round:", i)
+    #     round = Round()
+    #     round.run()
+    #     score.update_scoreboard(round.result, i)
+    #     time.sleep(scenario.period - ((time.time() - start_time) % scenario.period))
+    # elapsed = time.time() - start_time
+    # print(
+    #     "Elapsed time:",
+    #     time.strftime(
+    #         "%H:%M:%S.{}".format(str(elapsed % 1)[2:])[:15], time.gmtime(elapsed)
+    #     ),
+    # )

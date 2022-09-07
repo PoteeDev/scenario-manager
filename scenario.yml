@@ -4,13 +4,16 @@ actions:
   - ping
   - get
   - put
-  - exploit
+  #- exploit
 
 services:
   test: # service with name "test"
     hp: 1000 # service health points
     domain: test # subdomain name for service
     script: test.py # name of script with all actions for service
+    checkers:
+      - auth
+      - comment
     exploits: 
       sql: # name for exploits
         round: 1 # round for sql exploit run
@@ -22,6 +25,9 @@ services:
     hp: 1000 # service health points
     domain: test2 # subdomain name for service
     script: test.py # name of script with all actions for service
+    checkers:
+      - auth
+      - comment
     exploits: 
       sql: # name for exploits
         round: 1 # round for sql exploit run
