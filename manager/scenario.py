@@ -7,7 +7,7 @@ import redis
 import random
 import string
 from pathlib import Path
-from pymongo import MongoClient
+from pymongo import MongoClient, DESCENDING, ASCENDING
 from storage import storage
 
 
@@ -113,8 +113,11 @@ class Score(Scenario):
                 {"$setOnInsert": services},
                 upsert=True,
             )
+
     def get_matching(self, event):
-        return (storage[key] for key in storage if re.match(event, key))
+        for key in storage:
+            if re.match(event, key):
+                yield key.split("_")[3], storage[key]
 
     def get_status(self, entity):
         for service in self.services:
@@ -122,7 +125,7 @@ class Score(Scenario):
             if not storage.get(ping_action):
                 yield {service: -1}
             pattern = f"\w{{3}}_{entity}_{service}_.*"
-            results = list(self.get_matching(pattern))
+            results = dict(self.get_matching(pattern)).values()
             if all(results):
                 yield service, 1
             elif any(results):
@@ -133,13 +136,13 @@ class Score(Scenario):
     def get_exploits(self, entity):
         for service in self.services:
             pattern = f"exploit_{entity}_{service}_.*"
-            results = list(self.get_matching(pattern))
-            for r in results:
-                yield service, r
+            yield service, dict(self.get_matching(pattern))
 
     def update_services(self, entity, services):
         for service_name, status in services.items():
-            service = self.scoreboard.find_one({"id": entity}, {f"srv.{service_name}": 1})
+            service = self.scoreboard.find_one(
+                {"id": entity}, {f"srv.{service_name}": 1}
+            )
             service = service["srv"][service_name]
             service_state = 1 if status == 1 else 0
             if service:
@@ -154,6 +157,7 @@ class Score(Scenario):
                 self.scoreboard.update_one(
                     {"id": entity}, {"$set": {f"srv.{service_name}": service}}
                 )
+
     def update_exploits(self, _id, exploits):
         for service_name, result in exploits.items():
             for name, status in result.items():
@@ -173,75 +177,46 @@ class Score(Scenario):
                         },
                     )
 
+    def update_places(self):
+        scores = self.scoreboard.find().sort(
+            [("total_score", DESCENDING), ("total_lost", ASCENDING)],
+        )
+        for i, score in enumerate(scores, 1):
+            self.scoreboard.update_one(
+                {"id": score["id"]},
+                {
+                    "$set": {
+                        "place": i,
+                        "last_place": score.get("place", 0),
+                    }
+                },
+            )
+
     def update_scoreboard(self):
         for entity in self.entities:
             status = self.get_status(entity)
             self.update_services(entity, dict(status))
             exploits = self.get_exploits(entity)
             self.update_exploits(entity, dict(exploits))
+
             score = self.scoreboard.find_one({"id": entity})
-            total_score = sum(map(lambda x: x["score"], score["srv"].values()))
-            self.scoreboard.update_one({"id": entity}, {"$set": {"total_score": total_score}})
-
-#     def calculate(self, _id, service_name, service: dict):
-
-#         if service.get("exploit"):
-#             exploits = service.pop("exploit")
-#             self.update_exploits(_id, service_name, exploits)
-#         service_results = list()
-#         for checkers in service.values():
-#             service_results.extend(checkers.values())
-#         if all(service_results):
-#             status = 1
-#         elif any(service_results):
-#             status = 0
-#         else:
-#             status = -1
-
-#         self.update_service(_id, service_name, status)
-#         score = self.scoreboard.find_one({"id": _id})
-#         total_score = sum(map(lambda x: x["score"], score["srv"].values()))
-#         self.scoreboard.update_one({"id": _id}, {"$set": {"total_score": total_score}})
-
-#     def update_service(self, _id, service_name, status):
-#         service = self.scoreboard.find_one({"id": _id}, {f"srv.{service_name}": 1})
-#         service = service["srv"][service_name]
-#         service_state = 1 if status == 1 else 0
-#         if service:
-#             if self.round > 0:
-#                 service["sla"] = (
-#                     service["sla"] * (self.round - 1) + service_state
-#                 ) / self.round
-#             else:
-#                 service["sla"] = service_state
-#             service["status"] = status
-#             service["score"] = service["reputation"] * service["sla"]
-#             self.scoreboard.update_one(
-#                 {"id": _id}, {"$set": {f"srv.{service_name}": service}}
-#             )
-
-#     def update_exploits(self, _id, service_name, exploits):
-#         for name, result in exploits.items():
-#             exploit_cost = self.services[service_name]["exploits"][name]["cost"]
-#             if result == 0:
-#                 self.scoreboard.update_one(
-#                     {"id": _id}, {"$inc": {f"srv.{service_name}.gained": 1}}
-#                 )
-#             else:
-#                 self.scoreboard.update_one(
-#                     {"id": _id},
-#                     {
-#                         "$inc": {
-#                             f"srv.{service_name}.lost": 1,
-#                             f"srv.{service_name}.reputation": -exploit_cost,
-#                         }
-#                     },
-#                 )
-
-#     def update_scoreboard(self, round_result):
-#         for entity_name, entity_result in round_result.items():
-#             for service_name, service in entity_result.items():
-#                 self.calculate(entity_name, service_name, service)
+            total_score, total_gained, total_lost = 0, 0, 0
+            for service in score["srv"].values():
+                total_score += service["score"]
+                total_gained += service["gained"]
+                total_lost += service["lost"]
+            # total_score = sum(map(lambda x: x["score"], score["srv"].values()))
+            self.scoreboard.update_one(
+                {"id": entity},
+                {
+                    "$set": {
+                        "total_score": total_score,
+                        "total_gained": total_gained,
+                        "total_lost": total_lost,
+                    }
+                },
+            )
+            self.update_places()
 
 
 def generate_flag(n=25):
