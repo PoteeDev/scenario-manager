@@ -16,10 +16,6 @@ scheduler.start()
 def scenario_run():
     asyncio.run(Round().start())
     Score().update_scoreboard()
-    # score = Score()
-    # round = Round()
-    # round.run()
-    # score.update_scoreboard(round.result)
 
 
 def admin_required(f):

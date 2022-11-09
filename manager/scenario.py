@@ -8,7 +8,7 @@ import random
 import string
 from pathlib import Path
 from pymongo import MongoClient, DESCENDING, ASCENDING
-from storage import storage
+from storage import Storage
 
 
 class Settings:
@@ -90,6 +90,9 @@ class Scenario:
             self.entities = []
 
 
+storage = Storage()
+
+
 class Score(Scenario):
     def __init__(self) -> None:
         super().__init__()
@@ -114,29 +117,29 @@ class Score(Scenario):
                 upsert=True,
             )
 
-    def get_matching(self, event):
-        for key in storage:
-            if re.match(event, key):
-                yield key.split("_")[3], storage[key]
 
     def get_status(self, entity):
+        print(dict(storage.search("*")))
         for service in self.services:
-            ping_action = f"ping_{entity}_{service}"
-            if not storage.get(ping_action):
-                yield {service: -1}
-            pattern = f"\w{{3}}_{entity}_{service}_.*"
-            results = dict(self.get_matching(pattern)).values()
-            if all(results):
-                yield service, 1
-            elif any(results):
-                yield service, 0
-            else:
+            if storage.read("ping", entity, service) == 0:
                 yield service, -1
+            else:
+                pattern = f"???_{entity}_{service}_*"
+                results = map(int, dict(storage.search(pattern)).values())
+                print(results)
+                if all(results):
+                    yield service, 1
+                elif any(results):
+                    yield service, 0
+                else:
+                    yield service, -1
 
     def get_exploits(self, entity):
         for service in self.services:
-            pattern = f"exploit_{entity}_{service}_.*"
-            yield service, dict(self.get_matching(pattern))
+            pattern = f"exploit_{entity}_{service}_*"
+            yield service, dict(
+                map(lambda kv: (kv[0].split("_")[-1], kv[1]), storage.search(pattern))
+            )
 
     def update_services(self, entity, services):
         for service_name, status in services.items():
@@ -161,6 +164,7 @@ class Score(Scenario):
     def update_exploits(self, _id, exploits):
         for service_name, result in exploits.items():
             for name, status in result.items():
+                print(name, status)
                 exploit_cost = self.services[service_name]["exploits"][name]["cost"]
                 if status == 0:
                     self.scoreboard.update_one(
@@ -217,6 +221,8 @@ class Score(Scenario):
                 },
             )
             self.update_places()
+        # clear storage
+        storage.clear("exploit*")
 
 
 def generate_flag(n=25):
