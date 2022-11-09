@@ -60,6 +60,7 @@ class Scenario:
     rounds: int
     period: int
     entities: list
+    full_entities: list
     actions: list
     services: dict
 
@@ -81,11 +82,11 @@ class Scenario:
 
     def get_entities(self):
         db_entities = self.client["ad"]["entities"]
-        entities = db_entities.find(
-            {"blocked": {"$ne": True}, "login": {"$ne": "admin"}}, {"name": 1}
-        )
-        if entities:
-            self.entities = list(map(lambda x: x["name"], entities))
+        self.full_entities = list(db_entities.find(
+            {"blocked": {"$ne": True}, "login": {"$ne": "admin"}}
+        ))
+        if self.full_entities:
+            self.entities = list(map(lambda x: x["login"], self.full_entities))
         else:
             self.entities = []
 
@@ -99,7 +100,7 @@ class Score(Scenario):
 
         self.round = RoundStatus().get_round()
         self.scoreboard = self.client["ad"]["scoreboard"]
-        for _id in self.entities:
+        for entity in self.full_entities:
             services = dict()
             for name, service in self.services.items():
                 services[f"srv.{name}"] = {
@@ -109,14 +110,12 @@ class Score(Scenario):
                     "score": 0,
                     "sla": 0,
                 }
+            print(entity["login"])
             self.scoreboard.update_one(
-                {
-                    "id": _id,
-                },
+                {"id": entity["login"], "name":entity["name"]},
                 {"$setOnInsert": services},
                 upsert=True,
             )
-
 
     def get_status(self, entity):
         print(dict(storage.search("*")))
@@ -146,6 +145,7 @@ class Score(Scenario):
             service = self.scoreboard.find_one(
                 {"id": entity}, {f"srv.{service_name}": 1}
             )
+            print(entity, service)
             service = service["srv"][service_name]
             service_state = 1 if status == 1 else 0
             if service:
