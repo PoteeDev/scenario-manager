@@ -12,7 +12,7 @@ from aio_pika.abc import (
 )
 
 
-class FibonacciRpcClient:
+class RpcClient:
     connection: AbstractConnection
     channel: AbstractChannel
     callback_queue: AbstractQueue
@@ -22,7 +22,7 @@ class FibonacciRpcClient:
         self.futures: MutableMapping[str, asyncio.Future] = {}
         self.loop = asyncio.get_running_loop()
 
-    async def connect(self) -> "FibonacciRpcClient":
+    async def connect(self) -> "RpcClient":
         host = os.getenv("RABBITMQ_HOST", "localhost")
         user = os.getenv("RABBITMQ_USER", "services")
         password = os.getenv("RABBITMQ_PASS", "longpassword")
@@ -63,6 +63,11 @@ class FibonacciRpcClient:
 
         return json.loads(await future)
 
+    async def send(self, channel, msg) -> int:
+         await self.channel.default_exchange.publish(
+            Message(body=json.dumps(msg).encode()),
+            routing_key=channel,
+        )
 
 # class RunnerTask(object):
 #     async def __init__(self):

@@ -59,9 +59,11 @@ def convert_time(value):
 class Scenario:
     rounds: int
     period: int
+    scenario: dict
     entities: list
     full_entities: list
     actions: list
+    global_actions: list
     services: dict
 
     def __init__(self) -> None:
@@ -75,16 +77,17 @@ class Scenario:
 
     def load_scenario(self):
         collection = self.client["ad"]["settings"]
-        scenario = collection.find_one({"id": "scenario"})
-        self.period = convert_time(scenario["period"])
-        self.actions = scenario["actions"]
-        self.services = scenario["services"]
+        self.scenario = collection.find_one({"id": "scenario"})
+        self.period = convert_time(self.scenario["period"])
+        self.actions = self.scenario["actions"]
+        self.global_actions =  self.scenario["global_actions"]
+        self.services = self.scenario["services"]
 
     def get_entities(self):
         db_entities = self.client["ad"]["entities"]
-        self.full_entities = list(db_entities.find(
-            {"blocked": {"$ne": True}, "login": {"$ne": "admin"}}
-        ))
+        self.full_entities = list(
+            db_entities.find({"blocked": {"$ne": True}, "login": {"$ne": "admin"}})
+        )
         if self.full_entities:
             self.entities = list(map(lambda x: x["login"], self.full_entities))
         else:
@@ -112,7 +115,7 @@ class Score(Scenario):
                 }
             print(entity["login"])
             self.scoreboard.update_one(
-                {"id": entity["login"], "name":entity["name"]},
+                {"id": entity["login"], "name": entity["name"]},
                 {"$setOnInsert": services},
                 upsert=True,
             )
@@ -260,7 +263,6 @@ class Round(Scenario):
         self.load_actions()
 
     def load_actions(self):
-        base_dir = "manager/actions"
         actions_dir = "actions"
         actions_path = Path(actions_dir)
         for filename in actions_path.glob("[!_]*"):
@@ -269,87 +271,33 @@ class Round(Scenario):
             self.actions_modules[filename.stem] = action_module.action
 
     async def start(self):
-        print(self.actions_modules)
-        tasks_total = 0
         for action in self.actions:
             tasks = []
             for entity in self.entities:
-                for service in self.services:
+                for service, service_info in self.services.items():
                     tasks.append(
                         asyncio.ensure_future(
                             self.actions_modules[action]()(
                                 entity,
                                 service,
-                                service_info=self.services[service],
+                                service_info=service_info,
                                 round=self.round,
                             )
                         )
                     )
             await asyncio.gather(*tasks)
-            tasks_total += len(tasks)
+        gloabal_tasks = []
+        for action in self.global_actions:
+            gloabal_tasks.append(
+                asyncio.ensure_future(
+                    self.actions_modules[action]()(
+                        scenario=self.scenario,
+                        round=self.round,
+                    )
+                )
+            )
+        await asyncio.gather(*gloabal_tasks)
         self.round_status.increment_round()
-
-    # def run(self):
-    #     runner = RunnerTask()
-    #     logs = ActionsLogs()
-    #     for action in self.actions:
-    #         req = self.generate_request(action)
-    #         if req:
-    #             print("-->", req)
-    #             response = runner.send("runner", req)
-    #             print("<--", response)
-    #             for result in response:
-    #                 r = Action(
-    #                     self.round,
-    #                     result["id"],
-    #                     action,
-    #                     result["srv"],
-    #                     result["answer"],
-    #                     result["extra"],
-    #                 )
-    #                 if not self.result[r.entity].get(r.srv):
-    #                     self.result[r.entity] |= {r.srv: {"exploit": {}}}
-    #                 if r.extra == "error":
-    #                     if action != "exploit":
-    #                         self.result[r.entity][r.srv][action] = 0
-    #                     print(result)
-    #                     continue
-    #                 match action:
-    #                     case "ping":
-    #                         answer = 0
-    #                         if r.answer == "pong":
-    #                             answer = 1
-    #                         self.result[r.entity][r.srv][action] = answer
-    #                     case "get":
-    #                         answer = 0
-    #                         if (
-    #                             self.flags.validate(
-    #                                 r.entity,
-    #                                 r.srv,
-    #                                 r.extra,
-    #                                 r.answer,
-    #                             )
-    #                             or self.round == 0
-    #                         ):
-    #                             answer = 1
-    #                         self.result[r.entity][r.srv][action] = answer
-    #                     case "put":
-    #                         self.flags.put(
-    #                             r.entity,
-    #                             r.srv,
-    #                             *r.extra.split("_"),
-    #                             r.answer,
-    #                         )
-    #                         self.result[r.entity][r.srv][action] = 1
-    #                     case "exploit":
-    #                         self.result[r.entity][r.srv][action] |= {
-    #                             r.extra: int(r.answer)
-    #                         }
-
-    #                     case _:
-    #                         self.result[r.entity][r.srv][action] = int(r.answer)
-    #                 logs.add(result)
-    #     self.round_status.increment_round()
 
 
 if __name__ == "__main__":
@@ -358,20 +306,3 @@ if __name__ == "__main__":
     start_time = time.time()
     asyncio.run(Round().start())
     print("--- %s seconds ---" % (time.time() - start_time))
-    # scenario = Scenario()
-    # score = Score()
-
-    # start_time = time.time()
-    # for i in range(scenario.rounds):
-    #     print("Round:", i)
-    #     round = Round()
-    #     round.run()
-    #     score.update_scoreboard(round.result, i)
-    #     time.sleep(scenario.period - ((time.time() - start_time) % scenario.period))
-    # elapsed = time.time() - start_time
-    # print(
-    #     "Elapsed time:",
-    #     time.strftime(
-    #         "%H:%M:%S.{}".format(str(elapsed % 1)[2:])[:15], time.gmtime(elapsed)
-    #     ),
-    # )

@@ -3,7 +3,7 @@ import string
 from datetime import datetime
 import inspect
 import os
-from amqp import FibonacciRpcClient
+from amqp import RpcClient
 from storage import Storage
 
 
@@ -37,7 +37,7 @@ class BaseAction:
     def receive(self, response: Action):
         pass
 
-class ActionBase(FibonacciRpcClient, Storage):
+class ActionBase(RpcClient, Storage):
     def __init__(self):
-        FibonacciRpcClient.__init__(self)
+        RpcClient.__init__(self)
         Storage.__init__(self)
