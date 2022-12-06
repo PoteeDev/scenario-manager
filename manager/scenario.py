@@ -169,7 +169,7 @@ class Score(Scenario):
             for name, status in result.items():
                 print(name, status)
                 exploit_cost = self.services[service_name]["exploits"][name]["cost"]
-                if status == 0:
+                if status == "0":
                     self.scoreboard.update_one(
                         {"id": _id}, {"$inc": {f"srv.{service_name}.gained": 1}}
                     )
@@ -273,13 +273,14 @@ class Round(Scenario):
     async def start(self):
         for action in self.actions:
             tasks = []
-            for entity in self.entities:
+            for entity in self.full_entities:
                 for service, service_info in self.services.items():
                     tasks.append(
                         asyncio.ensure_future(
                             self.actions_modules[action]()(
-                                entity,
+                                entity['login'],
                                 service,
+                                entity['ip'],
                                 service_info=service_info,
                                 round=self.round,
                             )
