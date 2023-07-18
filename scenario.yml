@@ -16,15 +16,14 @@ services:
     domain: test # subdomain name for service
     script: test.py # name of script with all actions for service
     checkers:
-      - comment
-      - auth
+      - example
     exploits: 
       sql: # name for exploits
-        round: 1 # round for sql exploit run
+        startAt: 15m # round for sql exploit run
         period: 10m
         cost: 5 # cost of exploit
       rce:
-        round: 2
+        startAt: 30m
         period: 10m
         cost: 5
   test2: # service name
@@ -34,15 +33,50 @@ services:
     domain: test2 # subdomain name for service
     script: test.py # name of script with all actions for service
     checkers:
-      - comment
-      - auth
-    exploits: 
+      - example   
+    exploits:
       sql: # name for exploits
-        round: 1 # round for sql exploit run
+        startAt: 15m # round for sql exploit run
         period: 10m
-        cost: 5 # cost of exploit 
+        cost: 5 # cost of exploit
       rce:
-        round: 2
+        startAt: 30m
+        period: 10m
+        cost: 5
+  
+  test3: # service name
+    name: Second Test
+    description: Second Test service used for validate scenario and runners
+    reputation: 1000 # service health points
+    domain: test2 # subdomain name for service
+    script: test.py # name of script with all actions for service
+    checkers:
+      - example   
+    exploits:
+      sql: # name for exploits
+        startAt: 15m # round for sql exploit run
+        period: 10m
+        cost: 5 # cost of exploit
+      rce:
+        startAt: 30m
+        period: 10m
+        cost: 5
+  
+  test4: # service name
+    name: Second Test
+    description: Second Test service used for validate scenario and runners
+    reputation: 1000 # service health points
+    domain: test2 # subdomain name for service
+    script: test.py # name of script with all actions for service
+    checkers:
+      - example   
+    exploits:
+      sql: # name for exploits
+        startAt: 15m # round for sql exploit run
+        period: 10m
+        cost: 5 # cost of exploit
+      rce:
+        startAt: 30m
         period: 10m
         cost: 5
 

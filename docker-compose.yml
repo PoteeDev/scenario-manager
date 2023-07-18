@@ -8,3 +8,18 @@ services:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_USER=admin
       - RABBITMQ_PASS=admin
+  crdb:
+    image: cockroachdb/cockroach:v22.2.2
+    environment:
+      - COCKROACH_DATABASE=scoreboard
+    ports:
+      - "26257:26257"
+      - "8080:8080"
+    command: 'start-single-node --insecure'
+  
+  redis:
+    image: redis:6.2-alpine
+    restart: always
+    ports:
+      - '6379:6379'
+    command: redis-server --save 20 1 --loglevel warning --requirepass eYVX7EwVmmxKPCDmwMtyKVge8oLd2t81

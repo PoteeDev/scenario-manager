@@ -1,0 +1,52 @@
+time: 1h
+period: 15s
+global_actions:
+  - news
+actions: 
+  - ping
+  - get
+  - put
+  - exploit
+
+services:
+  test: # service with name "test"
+    name: Test
+    description: Test service used for validate scenario and runners
+    reputation: 1000 # service health points
+    domain: test # subdomain name for service
+    script: test.py # name of script with all actions for service
+    checkers:
+      - example
+    exploits: 
+      sql: # name for exploits
+        round: 1 # round for sql exploit run
+        period: 10m
+        cost: 5 # cost of exploit
+      rce:
+        round: 2
+        period: 10m
+        cost: 5
+  test2: # service name
+    name: Second Test
+    description: Second Test service used for validate scenario and runners
+    reputation: 1000 # service health points
+    domain: test2 # subdomain name for service
+    script: test.py # name of script with all actions for service
+    checkers:
+      - example
+    exploits: 
+      sql: # name for exploits
+        round: 1 # round for sql exploit run
+        period: 10m
+        cost: 5 # cost of exploit 
+      rce:
+        round: 2
+        period: 10m
+        cost: 5
+
+# chat id of tg channel
+news_chat_id: -12345
+news: 
+  - round: 1
+    text: test <b>bold message</b> with <a href="platform.potee.ru">link</a> 
+    mode: html
