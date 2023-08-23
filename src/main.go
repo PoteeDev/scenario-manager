@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/PoteeDev/scenario-manager/src/actions"
@@ -23,9 +24,9 @@ type Server struct {
 }
 
 func (s *Server) startServer() {
-	http.HandleFunc("/stop", func(w http.ResponseWriter, r *http.Request) {
-		s.Timer.Stop()
-		fmt.Fprintf(w, "manager stoped")
+	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{\"message\": \"ping\"}")
 	})
 	http.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
 		period, _ := time.ParseDuration(s.Actions.Scenario.Period)
@@ -33,8 +34,13 @@ func (s *Server) startServer() {
 		go s.Actions.StartManager(s.Timer)
 		fmt.Fprintf(w, "manager started")
 	})
+	http.HandleFunc("/stop", func(w http.ResponseWriter, r *http.Request) {
+		s.Timer.Stop()
+		fmt.Fprintf(w, "manager stoped")
+	})
 	log.Println("start manager server")
-	log.Fatalln(http.ListenAndServe(":3333", nil))
+	address := fmt.Sprintf(":%s", os.Getenv("PORT"))
+	log.Fatalln(http.ListenAndServe(address, nil))
 
 }
 

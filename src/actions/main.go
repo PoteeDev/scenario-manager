@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
-	"github.com/PoteeDev/admin/api/database"
 	pb "github.com/PoteeDev/potee-tasks-checker/proto"
 	"github.com/PoteeDev/scenario-manager/src/scenario"
 	"github.com/PoteeDev/scenario-manager/src/storage"
@@ -29,22 +29,6 @@ type Host struct {
 	Name string
 	Host string
 	ID   int64
-}
-
-func LoadHosts() []Host {
-	entities, err := database.GetAllEntities()
-	if err != nil {
-		log.Println(err)
-	}
-	hosts := []Host{}
-	for id, entity := range entities {
-		hosts = append(hosts, Host{
-			entity.Login,
-			entity.IP,
-			int64(id),
-		})
-	}
-	return hosts
 }
 
 func (a *Actions) Ping(serviceName string) {
@@ -177,22 +161,34 @@ func (a *Actions) Exploit(serviceName string) {
 					Service: serviceName,
 					Name:    exploitName,
 				}
-				for _, host := range LoadHosts() {
+				for id, host := range a.RoundInfo {
 
 					exploitReq.Data = append(exploitReq.Data, &pb.ExploitData{
-						Host: host.Host,
-						Id:   host.ID,
+						Host: host.TeamHost,
+						Id:   int64(id),
 					})
 				}
 				exploitReply, _ := a.ChckerClient.Exploit(context.Background(), exploitReq)
 				log.Println(serviceName, "exploit: ", exploitReply)
+				for _, result := range exploitReply.Results {
+					status := a.RoundInfo[int(result.Id)]
+					if result.Status == 0 && result.Answer == "yes" {
+						status.SetExploitStatus(serviceName, exploitName, Exploitable)
+					} else if result.Status == 0 && result.Answer == "no" {
+						status.SetExploitStatus(serviceName, exploitName, Safety)
+					}
+				}
 			}
 		}
 	}
 }
 
 func (a *Actions) Run() {
-	conn, _ := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, _ := grpc.Dial(
+		fmt.Sprintf("dns://%s:%s", os.Getenv("CHECKER_HOST"), os.Getenv("CHECKER_PORT")),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
+	)
 	a.ChckerClient = pb.NewCheckerClient(conn)
 	wg := &sync.WaitGroup{}
 	for serviceName := range a.Scenario.Services {
@@ -243,7 +239,7 @@ func (a *Actions) StartManager(ticker *time.Ticker) {
 			}
 			// run actions
 			a.Run()
-
+			// update results
 			a.UpdateServicesStatus()
 		}
 	}()

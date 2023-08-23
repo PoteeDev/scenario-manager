@@ -12,9 +12,14 @@ import (
 )
 
 const (
-	Unreacheble = -1
-	Mumbled     = 0
+	// services
 	ServiceOk   = 1
+	Mumbled     = 0
+	Unreacheble = -1
+	// exploits
+	Exploitable = 1
+	Safety      = 0
+	NotSet      = -1
 )
 
 func checkServiceStatus(service Services) int {
@@ -43,10 +48,21 @@ func (a *Actions) UpdateServicesStatus() {
 			// update Status
 			service.Status = checkServiceStatus(serviceInfo)
 
-			//state 0 - not worked or 1 - worked
+			// state 0 - not worked or 1 - worked
 			state := 0.0
 			if service.Status > 0 {
 				state = 1.0
+			}
+			// update exploits
+			for _, exploit := range serviceInfo.Exploits {
+				if exploit.Status != NotSet {
+					if exploit.Status == Exploitable {
+						service.Lost += 1
+						service.Reputation -= exploit.Cost
+					} else {
+						service.Gained += 1
+					}
+				}
 			}
 			// update SLA
 			if a.CurrentRound > 0 {
@@ -62,9 +78,5 @@ func (a *Actions) UpdateServicesStatus() {
 			scoreboard.ReplaceOne(context.TODO(), filter, score)
 		}
 	}
-
-}
-
-func (a *Actions) UpdateExploit() {
 
 }
