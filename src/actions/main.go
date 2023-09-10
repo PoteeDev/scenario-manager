@@ -41,7 +41,10 @@ func (a *Actions) Ping(serviceName string) {
 			Id:   int64(id),
 		})
 	}
-	pingReply, _ := a.ChckerClient.Ping(context.Background(), pingReq)
+	pingReply, err := a.ChckerClient.Ping(context.Background(), pingReq)
+	if err != nil {
+		log.Println("ping request error:", err)
+	}
 	for _, result := range pingReply.Results {
 		// save ping status
 		if result.Status == 0 {
@@ -184,11 +187,14 @@ func (a *Actions) Exploit(serviceName string) {
 }
 
 func (a *Actions) Run() {
-	conn, _ := grpc.Dial(
-		fmt.Sprintf("dns://%s:%s", os.Getenv("CHECKER_HOST"), os.Getenv("CHECKER_PORT")),
+	conn, err := grpc.Dial(
+		fmt.Sprintf("dns:///%s:%s", os.Getenv("CHECKER_HOST"), os.Getenv("CHECKER_PORT")),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
 	)
+	if err != nil {
+		log.Println("checker connection error:", err)
+	}
 	a.ChckerClient = pb.NewCheckerClient(conn)
 	wg := &sync.WaitGroup{}
 	for serviceName := range a.Scenario.Services {
@@ -241,6 +247,7 @@ func (a *Actions) StartManager(ticker *time.Ticker) {
 			a.Run()
 			// update results
 			a.UpdateServicesStatus()
+			a.SaveRoundEvents()
 		}
 	}()
 	wg.Wait()

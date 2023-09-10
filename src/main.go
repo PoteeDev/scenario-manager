@@ -19,6 +19,7 @@ var (
 )
 
 type Server struct {
+	Running bool
 	Timer   *time.Ticker
 	Actions *actions.Actions
 }
@@ -30,13 +31,23 @@ func (s *Server) startServer() {
 	})
 	http.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
 		period, _ := time.ParseDuration(s.Actions.Scenario.Period)
-		s.Timer = time.NewTicker(time.Duration(period.Seconds()) * time.Second)
-		go s.Actions.StartManager(s.Timer)
-		fmt.Fprintf(w, "manager started")
+		if !s.Running {
+			s.Timer = time.NewTicker(time.Duration(period.Seconds()) * time.Second)
+			go s.Actions.StartManager(s.Timer)
+			s.Running = true
+			msg := "manager started"
+			log.Println(msg)
+			fmt.Fprintf(w, msg)
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "manager already running")
 	})
 	http.HandleFunc("/stop", func(w http.ResponseWriter, r *http.Request) {
 		s.Timer.Stop()
-		fmt.Fprintf(w, "manager stoped")
+		s.Running = false
+		msg := "manager stoped"
+		log.Println(msg)
+		fmt.Fprintf(w, msg)
 	})
 	log.Println("start manager server")
 	address := fmt.Sprintf(":%s", os.Getenv("PORT"))

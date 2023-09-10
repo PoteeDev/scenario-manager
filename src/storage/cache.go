@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 
 	"github.com/redis/go-redis/v9"
@@ -26,8 +27,8 @@ var ctx = context.Background()
 func InitCache() *Cache {
 
 	client := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "eYVX7EwVmmxKPCDmwMtyKVge8oLd2t81",
+		Addr:     fmt.Sprintf("%s:%s", os.Getenv("REDIS_HOST"), os.Getenv("REDIS_PORT")),
+		Password: os.Getenv("REDIS_PASSWORD"),
 		DB:       0,
 	})
 	return &Cache{Client: client}

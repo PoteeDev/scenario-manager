@@ -25,7 +25,7 @@ func InitScoreboard(scenario *scenario.Scenario) {
 	log.Println("init count:", count)
 	if count == 0 {
 		// add scoreboard documents
-		entities, _ := database.GetAllEntities()
+		entities, _ := database.GetEntities()
 
 		for id, entity := range entities {
 			score := models.Score{

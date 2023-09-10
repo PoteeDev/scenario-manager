@@ -1,6 +1,12 @@
 package actions
 
-import "github.com/PoteeDev/admin/api/database"
+import (
+	"context"
+	"time"
+
+	"github.com/PoteeDev/admin/api/database"
+	"go.mongodb.org/mongo-driver/bson"
+)
 
 type RoundInfo struct {
 	TeamName string
@@ -27,8 +33,11 @@ type Exploit struct {
 // function for initializate new round
 func (a *Actions) NewRound() {
 	info := map[int]RoundInfo{}
-	entities, _ := database.GetAllEntities()
+	entities, _ := database.GetEntities()
 	for id, entity := range entities {
+		if !entity.Visible || entity.Blocked {
+			continue
+		}
 		services := map[string]Services{}
 		for serviceName, service := range a.Scenario.Services {
 			chekcers := map[string]Checker{}
@@ -91,4 +100,9 @@ func (r *RoundInfo) SetExploitStatus(serviceName, exploitName string, status int
 		exploit.Status = status
 		r.Services[serviceName].Exploits[exploitName] = exploit
 	}
+}
+
+func (a *Actions) SaveRoundEvents() {
+	eventsCollection := database.GetCollection(database.DB, "events")
+	eventsCollection.InsertOne(context.Background(), bson.M{"events": a.RoundInfo, "timestamp": time.Now().Unix()})
 }

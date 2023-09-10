@@ -53,6 +53,7 @@ func (a *Actions) UpdateServicesStatus() {
 			if service.Status > 0 {
 				state = 1.0
 			}
+
 			// update exploits
 			for _, exploit := range serviceInfo.Exploits {
 				if exploit.Status != NotSet {
@@ -62,6 +63,7 @@ func (a *Actions) UpdateServicesStatus() {
 					} else {
 						service.Gained += 1
 					}
+
 				}
 			}
 			// update SLA

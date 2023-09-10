@@ -2,8 +2,8 @@ package scenario
 
 import (
 	"fmt"
-	"io/ioutil"
 	"math/rand"
+	"os"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -66,7 +66,7 @@ func GenerateExploitRounds(allTime, roundPeriod string, exploitInfo Exploit) []i
 }
 
 func LoadScenario(filename string) *Scenario {
-	data, err := ioutil.ReadFile(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Println(err)
 		return nil
