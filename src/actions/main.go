@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pb "github.com/PoteeDev/potee-tasks-checker/proto"
+	managerModels "github.com/PoteeDev/scenario-manager/src/models"
 	"github.com/PoteeDev/scenario-manager/src/scenario"
 	"github.com/PoteeDev/scenario-manager/src/storage"
 	"google.golang.org/grpc"
@@ -21,7 +22,7 @@ type Actions struct {
 	DB           *gorm.DB
 	Cache        *storage.Cache
 	ChckerClient pb.CheckerClient
-	RoundInfo    map[int]RoundInfo
+	RoundInfo    map[int]managerModels.RoundInfo
 	CurrentRound int
 }
 

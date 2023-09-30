@@ -6,7 +6,8 @@ import (
 	"log"
 
 	"github.com/PoteeDev/admin/api/database"
-	"github.com/PoteeDev/scores/models"
+	managerModels "github.com/PoteeDev/scenario-manager/src/models"
+	scoreModels "github.com/PoteeDev/scores/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -22,7 +23,7 @@ const (
 	NotSet      = -1
 )
 
-func checkServiceStatus(service Services) int {
+func checkServiceStatus(service managerModels.Services) int {
 	if service.PingStatus == ServiceOk {
 		for _, checker := range service.Checkers {
 			if checker.GetStatus != ServiceOk || checker.PutStatus != ServiceOk {
@@ -36,7 +37,7 @@ func checkServiceStatus(service Services) int {
 
 func (a *Actions) UpdateServicesStatus() {
 	for teamID, round := range a.RoundInfo {
-		score := models.Score{}
+		score := scoreModels.Score{}
 		filter := bson.D{primitive.E{Key: "id", Value: fmt.Sprintf("%d", teamID)}}
 		scoreboard := database.GetCollection(database.DB, "scoreboard")
 		if err := scoreboard.FindOne(context.TODO(), filter).Decode(&score); err != nil {

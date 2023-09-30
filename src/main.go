@@ -59,7 +59,7 @@ func main() {
 	//db := storage.ConnectDB(*dbUrl)
 	cache := storage.InitCache()
 	s := scenario.LoadScenario(*scenarioFileName)
-
+	s.SaveToDB()
 	storage.InitScoreboard(s)
 	a := actions.Actions{Scenario: s, Cache: cache}
 	server := Server{Actions: &a}

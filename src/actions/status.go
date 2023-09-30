@@ -5,63 +5,42 @@ import (
 	"time"
 
 	"github.com/PoteeDev/admin/api/database"
+	managerModels "github.com/PoteeDev/scenario-manager/src/models"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-type RoundInfo struct {
-	TeamName string
-	TeamHost string
-	Services map[string]Services
-}
-
-type Services struct {
-	PingStatus int
-	Checkers   map[string]Checker
-	Exploits   map[string]Exploit //exploit name and status
-}
-
-type Checker struct {
-	GetStatus int
-	PutStatus int
-}
-
-type Exploit struct {
-	Cost   int
-	Status int
-}
-
 // function for initializate new round
 func (a *Actions) NewRound() {
-	info := map[int]RoundInfo{}
+	info := map[int]managerModels.RoundInfo{}
 	entities, _ := database.GetEntities()
 	for id, entity := range entities {
 		if !entity.Visible || entity.Blocked {
 			continue
 		}
-		services := map[string]Services{}
+		services := map[string]managerModels.Services{}
 		for serviceName, service := range a.Scenario.Services {
-			chekcers := map[string]Checker{}
+			chekcers := map[string]managerModels.Checker{}
 			for _, chekerName := range service.Checkers {
-				chekcers[chekerName] = Checker{
+				chekcers[chekerName] = managerModels.Checker{
 					PutStatus: Mumbled,
 					GetStatus: Mumbled,
 				}
 			}
 
-			exploits := map[string]Exploit{}
+			exploits := map[string]managerModels.Exploit{}
 			for name, exploit := range service.Exploits {
-				exploits[name] = Exploit{
+				exploits[name] = managerModels.Exploit{
 					Cost:   exploit.Cost,
 					Status: NotSet,
 				}
 			}
-			services[serviceName] = Services{
+			services[serviceName] = managerModels.Services{
 				PingStatus: Unreacheble,
 				Checkers:   chekcers,
 				Exploits:   exploits,
 			}
 		}
-		info[id+1] = RoundInfo{
+		info[id+1] = managerModels.RoundInfo{
 			TeamName: entity.Login,
 			TeamHost: entity.IP,
 			Services: services,
@@ -70,36 +49,6 @@ func (a *Actions) NewRound() {
 	a.RoundInfo = info
 	a.Cache.IncrementRound()
 	a.CurrentRound = a.Cache.CurrentRound()
-}
-
-func (r *RoundInfo) SetPingStatus(serviceName string, status int) {
-	if service, ok := r.Services[serviceName]; ok {
-		service.PingStatus = status
-		r.Services[serviceName] = service
-	}
-}
-
-func (r *RoundInfo) SetGetStatus(serviceName, chekcerName string, status int) {
-	// r.Services[serviceName].Checkers[chekcerName] = Checker{GetStatus: status, PutStatus: Mumbled}
-	if checker, ok := r.Services[serviceName].Checkers[chekcerName]; ok {
-		checker.GetStatus = status
-		r.Services[serviceName].Checkers[chekcerName] = checker
-	}
-}
-
-func (r *RoundInfo) SetPutStatus(serviceName, chekcerName string, status int) {
-	// r.Services[serviceName].Checkers[chekcerName] = Checker{GetStatus: status, PutStatus: Mumbled}
-	if checker, ok := r.Services[serviceName].Checkers[chekcerName]; ok {
-		checker.PutStatus = status
-		r.Services[serviceName].Checkers[chekcerName] = checker
-	}
-}
-
-func (r *RoundInfo) SetExploitStatus(serviceName, exploitName string, status int) {
-	if exploit, ok := r.Services[serviceName].Exploits[exploitName]; ok {
-		exploit.Status = status
-		r.Services[serviceName].Exploits[exploitName] = exploit
-	}
 }
 
 func (a *Actions) SaveRoundEvents() {
