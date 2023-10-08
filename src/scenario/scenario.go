@@ -15,6 +15,7 @@ import (
 )
 
 type Scenario struct {
+	ID            string             `bson:"id,omitempty"`
 	Time          string             `yaml:"time" bson:"time,omitempty"`
 	Period        string             `yaml:"period" bson:"period,omitempty"`
 	GlobalActions []string           `yaml:"global_actions" bson:"global_actions,omitempty"`
@@ -70,9 +71,10 @@ func GenerateExploitRounds(allTime, roundPeriod string, exploitInfo Exploit) []i
 }
 
 func (s *Scenario) SaveToDB() {
+	s.ID = "scenario"
 	client := database.ConnectDB()
-	coll := database.GetCollection(client, "scenario")
-	filter := s
+	coll := database.GetCollection(client, "settings")
+	filter := bson.M{"id": "scenario"}
 	update := bson.D{{Key: "$set", Value: s}}
 	opts := options.Update().SetUpsert(true)
 	result, err := coll.UpdateOne(context.TODO(), filter, update, opts)

@@ -248,6 +248,7 @@ func (a *Actions) StartManager(ticker *time.Ticker) {
 			a.Run()
 			// update results
 			a.UpdateServicesStatus()
+			a.UpdatePlaces()
 			a.SaveRoundEvents()
 		}
 	}()
